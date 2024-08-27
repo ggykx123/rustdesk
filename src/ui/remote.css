@@ -19,6 +19,9 @@ div#quality-monitor {
     border: 0.5px solid azure;
 }
 
+/*  这条规则设置了 video 元素的行为（behavior）。
+    这里的 native-remote 是之前注册的行为名称，
+    而 video 是指该行为与 video 元素关联。这意味着当这个 video 元素被渲染时，将使用之前注册的 "native-remote" 行为。 */
 video#handler {
     behavior: native-remote video;
     size: *;

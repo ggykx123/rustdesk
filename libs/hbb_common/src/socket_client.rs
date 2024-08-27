@@ -171,6 +171,7 @@ pub async fn new_udp_for(
     target: &str,
     ms_timeout: u64,
 ) -> ResultType<(FramedSocket, TargetAddr<'static>)> {
+    // 如果网络类型是直连，则查询地址
     let (ipv4, target) = if NetworkType::Direct == Config::get_network_type() {
         let addr = test_target(target).await?;
         (addr.is_ipv4(), addr.into_target_addr()?)

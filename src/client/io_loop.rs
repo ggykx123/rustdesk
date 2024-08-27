@@ -1037,6 +1037,7 @@ impl<T: InvokeUiSession> Remote<T> {
             custom_fps = 30;
         }
         let ctl = &mut self.fps_control;
+        // 获取视频队列长度
         let len = self
             .video_queue_map
             .read()
@@ -1059,6 +1060,7 @@ impl<T: InvokeUiSession> Remote<T> {
                 decode_fps = decode_fps / active_displays;
             }
         }
+        // 限制值为27帧
         let mut limited_fps = if direct {
             decode_fps * 9 / 10 // 30 got 27
         } else {
@@ -1068,12 +1070,16 @@ impl<T: InvokeUiSession> Remote<T> {
             limited_fps = custom_fps;
         }
         let last_auto_fps = self.handler.lc.read().unwrap().last_auto_fps.clone();
-        let should_decrease = (len > 1
-            && last_auto_fps.clone().unwrap_or(custom_fps as _) > limited_fps)
+        // 自动调整FPS的逻辑:
+        // 检查是否需要减少FPS。
+        let should_decrease = 
+            (len > 1 && last_auto_fps.clone().unwrap_or(custom_fps as _) > limited_fps) 
             || len > std::cmp::max(1, limited_fps / 2);
 
         // increase judgement
+        // （增加fps值）的算法
         if len <= 1 {
+            // 应该是cpu的空闲计数
             if ctl.idle_counter < usize::MAX {
                 ctl.idle_counter += 1;
             }
@@ -1081,6 +1087,7 @@ impl<T: InvokeUiSession> Remote<T> {
             ctl.idle_counter = 0;
         }
         let mut should_increase = false;
+
         if let Some(last_auto_fps) = last_auto_fps.clone() {
             // ever set
             if last_auto_fps + 3 <= limited_fps && ctl.idle_counter > 3 {
@@ -1097,6 +1104,7 @@ impl<T: InvokeUiSession> Remote<T> {
             if auto_fps < 1 {
                 auto_fps = 1;
             }
+            // 设置fps
             let mut misc = Misc::new();
             misc.set_option(OptionMessage {
                 custom_fps: auto_fps as _,
@@ -1126,10 +1134,14 @@ impl<T: InvokeUiSession> Remote<T> {
         }
     }
 
+    // 负责处理来自远程对等端的消息。
+    // 根据接收到的数据包类型来执行相应的操作。
     async fn handle_msg_from_peer(&mut self, data: &[u8], peer: &mut Stream) -> bool {
         if let Ok(msg_in) = Message::parse_from_bytes(&data) {
             match msg_in.union {
+                // 视频流量包的处理
                 Some(message::Union::VideoFrame(vf)) => {
+                    // 首次通讯处理
                     if !self.first_frame {
                         self.first_frame = true;
                         self.handler.close_success();
@@ -1138,6 +1150,7 @@ impl<T: InvokeUiSession> Remote<T> {
                         self.send_toggle_virtual_display_msg(peer).await;
                         self.send_toggle_privacy_mode_msg(peer).await;
                     }
+                    // 更新视频帧编码格式
                     let incoming_format = CodecFormat::from(&vf);
                     if self.video_format != incoming_format {
                         self.video_format = incoming_format.clone();
@@ -1146,15 +1159,18 @@ impl<T: InvokeUiSession> Remote<T> {
                             ..Default::default()
                         })
                     };
-
+                    // 视频帧所属显示器编号
                     let display = vf.display as usize;
                     let mut video_queue_write = self.video_queue_map.write().unwrap();
+                    // 如果指定显示器的视频处理队列不存在则新建队列
                     if !video_queue_write.contains_key(&display) {
                         video_queue_write.insert(
                             display,
                             ArrayQueue::<VideoFrame>::new(crate::client::VIDEO_QUEUE_SIZE),
                         );
                     }
+                    // 如果视频帧包含关键帧（key frame），则清空对应的视频队列，并直接将视频帧发送给处理线程。
+                    //      关键帧是一种特殊的视频帧，它包含了完整图像的所有信息，可以独立解码成一幅完整的画面
                     if Self::contains_key_frame(&vf) {
                         if let Some(video_queue) = video_queue_write.get_mut(&display) {
                             while let Some(_) = video_queue.pop() {}
@@ -1163,11 +1179,13 @@ impl<T: InvokeUiSession> Remote<T> {
                             .send(MediaData::VideoFrame(Box::new(vf)))
                             .ok();
                     } else {
+                    // 否则插入队列
                         if let Some(video_queue) = video_queue_write.get_mut(&display) {
                             video_queue.force_push(vf);
                         }
                         self.video_sender.send(MediaData::VideoQueue(display)).ok();
                     }
+                    // 更新fps相关信息
                     self.fps_control
                         .last_active_time
                         .insert(display, Instant::now());
@@ -1700,6 +1718,7 @@ impl<T: InvokeUiSession> Remote<T> {
         }
     }
 
+    // ，用于处理从服务器或对等端接收到的后台通知。这些通知可以是各种类型的信息，例如阻止输入状态的更改或隐私模式状态的更改等。
     async fn handle_back_notification(&mut self, notification: BackNotification) -> bool {
         match notification.union {
             Some(back_notification::Union::BlockInputState(state)) => {
@@ -1726,6 +1745,7 @@ impl<T: InvokeUiSession> Remote<T> {
         true
     }
 
+    // 打开或者关闭用户输入，比如键盘鼠标
     #[inline(always)]
     fn update_block_input_state(&mut self, on: bool) {
         self.handler.update_block_input_state(on);
@@ -1771,7 +1791,7 @@ impl<T: InvokeUiSession> Remote<T> {
             _ => {}
         }
     }
-
+    // 更新私密模式
     #[inline(always)]
     fn update_privacy_mode(&mut self, impl_key: String, on: bool) {
         let mut config = self.handler.load_config();
@@ -1791,7 +1811,7 @@ impl<T: InvokeUiSession> Remote<T> {
 
         self.handler.update_privacy_mode();
     }
-
+    // 私密模式设置
     async fn handle_back_msg_privacy_mode(
         &mut self,
         state: back_notification::PrivacyModeState,

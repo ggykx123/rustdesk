@@ -1138,6 +1138,7 @@ pub async fn get_next_nonkeyexchange_msg(
     None
 }
 
+// 检查进程是否已经运行，避免起多任务
 #[allow(unused_mut)]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn check_process(arg: &str, mut same_uid: bool) -> bool {
@@ -1153,6 +1154,7 @@ pub fn check_process(arg: &str, mut same_uid: bool) -> bool {
     if let Ok(linked) = path.read_link() {
         path = linked;
     }
+    // 将 Path 类型的 path 转换为一个字符串。将这个字符串转换为小写形式。
     let path = path.to_string_lossy().to_lowercase();
     let my_uid = sys
         .process((std::process::id() as usize).into())
@@ -1185,6 +1187,7 @@ pub fn check_process(arg: &str, mut same_uid: bool) -> bool {
     false
 }
 
+// 建立一个安全的 TCP 连接。具体来说,它进行了以下操作:
 pub async fn secure_tcp(conn: &mut FramedStream, key: &str) -> ResultType<()> {
     let rs_pk = get_rs_pk(key);
     let Some(rs_pk) = rs_pk else {

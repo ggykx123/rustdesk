@@ -275,6 +275,7 @@ impl InvokeUiSession for SciterHandler {
         self.call("setMultipleWindowsSession", &make_args!(v));
     }
 
+        // 应该是建立链接循环抓取键盘活动
     fn on_connected(&self, conn_type: ConnType) {
         match conn_type {
             ConnType::RDP => {}

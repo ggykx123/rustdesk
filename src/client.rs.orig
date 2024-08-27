@@ -259,7 +259,6 @@ impl Client {
         if hbb_common::is_ip_str(peer) {
             return Ok((
                 (
-                    // 建立tcp链接
                     connect_tcp(check_port(peer, RELAY_PORT + 1), CONNECT_TIMEOUT).await?,
                     true,
                     None,
@@ -2263,8 +2262,6 @@ where
     F: 'static + FnMut(usize, &mut scrap::ImageRgb, *mut c_void, bool) + Send,
     T: InvokeUiSession,
 {
-    // 注册一个mpsc（多生产者单消费者）的消息队列
-    // video_sender是消费者  video_receiver是生产者
     let (video_sender, video_receiver) = mpsc::channel::<MediaData>();
     let video_queue_map: Arc<RwLock<HashMap<usize, ArrayQueue<VideoFrame>>>> = Default::default();
     let video_queue_map_cloned = video_queue_map.clone();
@@ -2288,9 +2285,7 @@ where
                 match data {
                     MediaData::VideoFrame(_) | MediaData::VideoQueue(_) => {
                         let vf = match data {
-                            // 数据类型为视频帧，则继续处理
                             MediaData::VideoFrame(vf) => *vf,
-                            // 数据类型为视频消息，从视频队列中弹出视频帧并处理
                             MediaData::VideoQueue(display) => {
                                 if let Some(video_queue) =
                                     video_queue_map.read().unwrap().get(&display)
@@ -2312,7 +2307,6 @@ where
                         let display = vf.display as usize;
                         let start = std::time::Instant::now();
                         let format = CodecFormat::from(&vf);
-                        // 如果此显示器上视频处理函数未注册，则注册
                         if !handler_controller_map.contains_key(&display) {
                             handler_controller_map.insert(
                                 display,
@@ -2322,22 +2316,17 @@ where
                                 },
                             );
                         }
-                        // 锁定处理函数
                         if let Some(handler_controller) = handler_controller_map.get_mut(&display) {
                             let mut pixelbuffer = true;
                             let mut tmp_chroma = None;
                             let format_changed =
                                 handler_controller.handler.decoder.format() != format;
-                            // 对视频帧处理
-                            // 这里是不是可以多进程处理，需要测试内存传递的开销和单进程
-                            // 如果fps不高，则需要检查是否是单cpu处理能力不足的瓶颈导致
                             match handler_controller.handler.handle_frame(
                                 vf,
                                 &mut pixelbuffer,
                                 &mut tmp_chroma,
                             ) {
                                 Ok(true) => {
-                                    // 调用callback来刷新ui
                                     video_callback(
                                         display,
                                         &mut handler_controller.handler.rgb,

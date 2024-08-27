@@ -142,7 +142,9 @@ pub fn start(args: &mut [String]) {
         let id = id.to_owned();
         let pass = iter.next().unwrap_or(&"".to_owned()).clone();
         let args: Vec<String> = iter.map(|x| x.clone()).collect();
+        // 显示id，将来可能要改为显示
         frame.set_title(&id);
+        // 前端 video 绑定方法
         frame.register_behavior("native-remote", move || {
             let handler =
                 remote::SciterSession::new(cmd.clone(), id.clone(), pass.clone(), args.clone());
@@ -172,6 +174,7 @@ pub fn start(args: &mut [String]) {
     }
     #[cfg(not(feature = "inline"))]
     frame.load_file(&format!(
+        // 执行路径下的/src/ui/remote.html
         "file://{}/src/ui/{}",
         std::env::current_dir()
             .map(|c| c.display().to_string())

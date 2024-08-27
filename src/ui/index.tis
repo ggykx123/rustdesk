@@ -58,8 +58,10 @@ class ConnectStatus: Reactor.Component {
     }
 }
 
+// 建立新的远程链接，其中id可能可以为ip
 function createNewConnect(id, type) {
     id = id.replace(/\s/g, "");
+    // 解析id 这里id是9位数
     app.remote_id.value = formatId(id);
     if (!id) return;
     var old_id = id;
