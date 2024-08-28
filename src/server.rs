@@ -128,15 +128,21 @@ async fn accept_connection_(server: ServerPtr, socket: Stream, secure: bool) -> 
     Ok(())
 }
 
+// 建立tcp会话消息
+// 目前已知是在direct_server上
 pub async fn create_tcp_connection(
     server: ServerPtr,
     stream: Stream,
     addr: SocketAddr,
     secure: bool,
 ) -> ResultType<()> {
+    // 从socket上接受到的数据流
     let mut stream = stream;
+    // 生成id
     let id = server.write().unwrap().get_new_id();
+    // 生成密钥对
     let (sk, pk) = Config::get_key_pair();
+    // 配置使用安全链接，这初始化安全握手过程
     if secure && pk.len() == sign::PUBLICKEYBYTES && sk.len() == sign::SECRETKEYBYTES {
         let mut sk_ = [0u8; sign::SECRETKEYBYTES];
         sk_[..].copy_from_slice(&sk);
@@ -157,8 +163,10 @@ pub async fn create_tcp_connection(
             .into(),
             ..Default::default()
         });
+        //发送安全链接请求
         timeout(CONNECT_TIMEOUT, stream.send(&msg_out)).await??;
         match timeout(CONNECT_TIMEOUT, stream.next()).await? {
+            // 处理安全链接
             Some(res) => {
                 let bytes = res?;
                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
@@ -198,6 +206,7 @@ pub async fn create_tcp_connection(
             .ok();
         log::info!("wake up macos");
     }
+    // 建立tcp会话
     Connection::start(addr, stream, id, Arc::downgrade(&server)).await;
     Ok(())
 }
@@ -260,9 +269,11 @@ async fn create_relay_connection_(
 
 impl Server {
     fn is_video_service_name(name: &str) -> bool {
+        // 服务名设置为video
         name.starts_with(video_service::NAME)
     }
 
+    // 参数设置被控端核心视频服务
     pub fn try_add_primay_video_service(&mut self) {
         let primary_video_service_name =
             video_service::get_service_name(*display_service::PRIMARY_DISPLAY_IDX);
@@ -458,6 +469,7 @@ pub async fn start_server(_is_server: bool) {
 /// Otherwise, client will check if there's already a server and start one if not.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tokio::main]
+// 启动服务端
 pub async fn start_server(is_server: bool) {
     #[cfg(target_os = "linux")]
     {
@@ -468,8 +480,10 @@ pub async fn start_server(is_server: bool) {
     hbb_common::platform::windows::start_cpu_performance_monitor();
 
     if is_server {
+        //服务运行标记
         crate::common::set_server_running(true);
         std::thread::spawn(move || {
+            // 启动服务进程
             if let Err(err) = crate::ipc::start("") {
                 log::error!("Failed to start ipc: {}", err);
                 if crate::is_server() {
@@ -479,6 +493,7 @@ pub async fn start_server(is_server: bool) {
                 std::process::exit(-1);
             }
         });
+        //某个按键的优化？
         input_service::fix_key_down_timeout_loop();
         #[cfg(target_os = "linux")]
         if input_service::wayland_use_uinput() {
@@ -490,7 +505,9 @@ pub async fn start_server(is_server: bool) {
         crate::platform::try_kill_broker();
         #[cfg(feature = "hwcodec")]
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        // 检查是否已经运行
         scrap::hwcodec::start_check_process();
+        // 启动与中继服务器的会话
         crate::RendezvousMediator::start_all().await;
     } else {
         match crate::ipc::connect(1000, "").await {

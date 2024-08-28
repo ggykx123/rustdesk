@@ -88,6 +88,7 @@ struct VideoFrameController {
     send_conn_ids: HashSet<i32>,
 }
 
+// 视频帧控制器
 impl VideoFrameController {
     fn new() -> Self {
         Self {
@@ -157,11 +158,13 @@ pub fn get_service_name(idx: usize) -> String {
     format!("{}{}", NAME, idx)
 }
 
+// 被控端服务处理类的新建方法
 pub fn new(idx: usize) -> GenericService {
     let vs = VideoService {
         sp: GenericService::new(get_service_name(idx), true),
         idx,
     };
+    // 注册服务的回调函数
     GenericService::run(&vs, run);
     vs.sp
 }
@@ -292,14 +295,17 @@ impl DerefMut for CapturerInfo {
     }
 }
 
+// 获取屏幕捕获器
 fn get_capturer(current: usize, portable_service_running: bool) -> ResultType<CapturerInfo> {
     #[cfg(target_os = "linux")]
     {
+        //linux下如果不是x11则访问wayland
         if !is_x11() {
             return super::wayland::get_capturer();
         }
     }
 
+    //获取所有显示器
     let mut displays = Display::all()?;
     let ndisplay = displays.len();
     if ndisplay <= current {
@@ -312,6 +318,7 @@ fn get_capturer(current: usize, portable_service_running: bool) -> ResultType<Ca
     let display = displays.remove(current);
 
     #[cfg(target_os = "linux")]
+    // linux下如果不是x11则获取wayland的捕获器
     if let Display::X11(inner) = &display {
         if let Err(err) = inner.get_shm_status() {
             log::warn!(
@@ -335,6 +342,7 @@ fn get_capturer(current: usize, portable_service_running: bool) -> ResultType<Ca
         &name,
     );
 
+    // 隐私id？ 干啥用的
     let privacy_mode_id = get_privacy_mode_conn_id().unwrap_or(INVALID_PRIVACY_MODE_CONN_ID);
     #[cfg(not(windows))]
     let capturer_privacy_mode_id = privacy_mode_id;
@@ -364,6 +372,7 @@ fn get_capturer(current: usize, portable_service_running: bool) -> ResultType<Ca
             log::info!("In privacy mode, the peer side cannot watch the screen");
         }
     }
+    // 创建捕获器
     let capturer = create_capturer(
         capturer_privacy_mode_id,
         display,
@@ -382,6 +391,7 @@ fn get_capturer(current: usize, portable_service_running: bool) -> ResultType<Ca
     })
 }
 
+// 视频解码处理函数？
 fn run(vs: VideoService) -> ResultType<()> {
     let _raii = Raii::new(vs.idx);
     // Wayland only support one video capturer for now. It is ok to call ensure_inited() here.
@@ -406,6 +416,7 @@ fn run(vs: VideoService) -> ResultType<()> {
 
     let display_idx = vs.idx;
     let sp = vs.sp;
+    // 获取捕获器
     let mut c = get_capturer(display_idx, last_portable_service_running)?;
     #[cfg(windows)]
     if !scrap::codec::enable_directx_capture() && !c.is_gdi() {
@@ -420,8 +431,10 @@ fn run(vs: VideoService) -> ResultType<()> {
         "allow-auto-record-incoming",
         &Config::get_option("allow-auto-record-incoming"),
     );
+
     let client_record = video_qos.record();
     drop(video_qos);
+    // 配置发送的还是接受的解码器？
     let (mut encoder, encoder_cfg, codec_format, use_i444, recorder) = match setup_encoder(
         &c,
         display_idx,
@@ -440,6 +453,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                 codec: VpxVideoCodecId::VP9,
                 keyframe_interval: None,
             }));
+            //重新获取配置参数后再次配置解码器
             setup_encoder(
                 &c,
                 display_idx,
@@ -457,6 +471,7 @@ fn run(vs: VideoService) -> ResultType<()> {
         try_broadcast_display_changed(&sp, display_idx, &c, true).ok();
         bail!(e);
     }
+    // 设置码率的位置
     VIDEO_QOS.lock().unwrap().store_bitrate(encoder.bitrate());
     VIDEO_QOS
         .lock()
@@ -487,6 +502,7 @@ fn run(vs: VideoService) -> ResultType<()> {
     let repeat_encode_max = 10;
     let mut encode_fail_counter = 0;
 
+    // sp应该是配置的监听配置的服务端流相关的处理方法
     while sp.ok() {
         #[cfg(windows)]
         check_uac_switch(c.privacy_mode_id, c._capturer_privacy_mode_id)?;
@@ -561,11 +577,15 @@ fn run(vs: VideoService) -> ResultType<()> {
 
         let time = now - start;
         let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
+        // c是捕获器
+        // 这里是获取捕获器抓取的帧？
         let res = match c.frame(spf) {
             Ok(frame) => {
                 repeat_encode_counter = 0;
                 if frame.valid() {
+                    // 对帧编码
                     let frame = frame.to(encoder.yuvfmt(), &mut yuv, &mut mid_data)?;
+                    // 填充发送消息
                     let send_conn_ids = handle_one_frame(
                         display_idx,
                         &sp,
@@ -575,6 +595,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                         recorder.clone(),
                         &mut encode_fail_counter,
                     )?;
+                    // 设置发送标志位
                     frame_controller.set_send(now, send_conn_ids);
                 }
                 #[cfg(windows)]
@@ -656,8 +677,10 @@ fn run(vs: VideoService) -> ResultType<()> {
         }
 
         let mut fetched_conn_ids = HashSet::new();
+        // 超时时间3s
         let timeout_millis = 3_000u64;
         let wait_begin = Instant::now();
+        // 等待所有的链接发送接受确认帧
         while wait_begin.elapsed().as_millis() < timeout_millis as _ {
             check_privacy_mode_changed(&sp, display_idx, &c)?;
             frame_controller.try_wait_next(&mut fetched_conn_ids, 300);

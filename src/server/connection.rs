@@ -281,6 +281,7 @@ const SEND_TIMEOUT_VIDEO: u64 = 12_000;
 const SEND_TIMEOUT_OTHER: u64 = SEND_TIMEOUT_VIDEO * 10;
 const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 
+// direct_server tcp会话处理函数
 impl Connection {
     pub async fn start(
         addr: SocketAddr,
@@ -294,28 +295,39 @@ impl Connection {
             challenge: Config::get_auto_password(6),
             ..Default::default()
         };
+        // 建立4个通道 
         let (tx_from_cm_holder, mut rx_from_cm) = mpsc::unbounded_channel::<ipc::Data>();
         // holding tx_from_cm_holder to avoid cpu burning of rx_from_cm.recv when all sender closed
+        // tx和rx: 用于发送消息。
         let tx_from_cm = tx_from_cm_holder.clone();
+        // tx_to_cm和rx_to_cm: 用于发送数据到CM。
         let (tx_to_cm, rx_to_cm) = mpsc::unbounded_channel::<ipc::Data>();
         let (tx, mut rx) = mpsc::unbounded_channel::<(Instant, Arc<Message>)>();
+        // tx_video和rx_video: 用于发送视频消息。
         let (tx_video, mut rx_video) = mpsc::unbounded_channel::<(Instant, Arc<Message>)>();
+        // tx_input: 用于接收输入数据。
         let (tx_input, _rx_input) = std_mpsc::channel();
+        // http的信号？
         let mut hbbs_rx = crate::hbbs_http::sync::signal_receiver();
+        // 手机的额外通道
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let (tx_cm_stream_ready, _rx_cm_stream_ready) = mpsc::channel(1);
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let (_tx_desktop_ready, rx_desktop_ready) = mpsc::channel(1);
         #[cfg(target_os = "linux")]
+        // linux下无头tcp的处理函数？
         let linux_headless_handle =
             LinuxHeadlessHandle::new(_rx_cm_stream_ready, _tx_desktop_ready);
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let tx_cloned = tx.clone();
+        // 创立链接对象
         let mut conn = Self {
+            // 应该是保存视频流的管道的处理方式
             inner: ConnInner {
                 id,
                 tx: Some(tx),
+                // 注册视频处理管道的发送函数
                 tx_video: Some(tx_video),
             },
             require_2fa: crate::auth_2fa::get_2fa(None),
@@ -426,6 +438,7 @@ impl Connection {
             crate::rustdesk_interval(time::interval_at(Instant::now(), TEST_DELAY_TIMEOUT));
         let mut last_recv_time = Instant::now();
 
+        // 设置超时时间
         conn.stream.set_send_timeout(
             if conn.file_transfer.is_some() || conn.port_forward_socket.is_some() {
                 SEND_TIMEOUT_OTHER
@@ -441,7 +454,6 @@ impl Connection {
         loop {
             tokio::select! {
                 // biased; // video has higher priority // causing test_delay_timer failed while transferring big file
-
                 Some(data) = rx_from_cm.recv() => {
                     match data {
                         ipc::Data::Authorize => {
@@ -481,6 +493,7 @@ impl Connection {
                             conn.send(msg_out).await;
                             conn.chat_unanswered = false;
                         }
+                        //修改配置
                         ipc::Data::SwitchPermission{name, enabled} => {
                             log::info!("Change permission {} -> {}", name, enabled);
                             if &name == "keyboard" {
@@ -527,9 +540,11 @@ impl Connection {
                             allow_err!(conn.stream.send_raw(bytes).await);
                         }
                         #[cfg(any(target_os="windows", target_os="linux", target_os = "macos"))]
+                        // 剪切板
                         ipc::Data::ClipboardFile(clip) => {
                             allow_err!(conn.stream.send(&clip_2_msg(clip)).await);
                         }
+                        // 隐私模式
                         ipc::Data::PrivacyModeState((_, state, impl_key)) => {
                             let msg_out = match state {
                                 privacy_mode::PrivacyModeState::OffSucceeded => {
@@ -579,6 +594,7 @@ impl Connection {
                         _ => {}
                     }
                 },
+                // 对于控制类的消息的处理
                 res = conn.stream.next() => {
                     if let Some(res) = res {
                         match res {
@@ -588,11 +604,15 @@ impl Connection {
                             },
                             Ok(bytes) => {
                                 last_recv_time = Instant::now();
+                                // 锁定并更新当前最后接受时间
                                 *conn.last_recv_time.lock().unwrap() = Instant::now();
+                                // 解析message
                                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
+                                    // 调用on_message处理消息
                                     if !conn.on_message(msg_in).await {
                                         break;
                                     }
+                                    // 端口转发相关
                                     if conn.port_forward_socket.is_some() && conn.authorized {
                                         log::info!("Port forward, last_test_delay is none: {}", conn.last_test_delay.is_none());
                                         // Avoid TestDelay reply injection into rdp data stream
@@ -608,6 +628,7 @@ impl Connection {
                         break;
                     }
                 },
+                // 处理文件传输
                 _ = conn.file_timer.tick() => {
                     if !conn.read_jobs.is_empty() {
                         conn.send_to_cm(ipc::Data::FileTransferLog(("transfer".to_string(), fs::serialize_transfer_jobs(&conn.read_jobs))));
@@ -626,6 +647,7 @@ impl Connection {
                         conn.file_timer = crate::rustdesk_interval(time::interval_at(Instant::now() + SEC30, SEC30));
                     }
                 }
+                // 处理web信号
                 Ok(conns) = hbbs_rx.recv() => {
                     if conns.contains(&id) {
                         conn.send_close_reason_no_retry("Closed manually by web console").await;
@@ -633,10 +655,13 @@ impl Connection {
                         break;
                     }
                 }
+                //接受并处理视频流信息
                 Some((instant, value)) = rx_video.recv() => {
                     if !conn.video_ack_required {
+                        // 发送接受确认帧
                         video_service::notify_video_frame_fetched(id, Some(instant.into()));
                     }
+                    // 
                     if let Err(err) = conn.stream.send(&value as &Message).await {
                         conn.on_close(&err.to_string(), false).await;
                         break;
@@ -1687,6 +1712,8 @@ impl Connection {
         }
     }
 
+    // 处理server tcp链接接受到消息,主要是非视频里的数据
+    // 检查是否是login、auth、testdelay和切换资源
     async fn on_message(&mut self, msg: Message) -> bool {
         if let Some(message::Union::LoginRequest(lr)) = msg.union {
             self.handle_login_request_without_validation(&lr).await;
@@ -1885,6 +1912,7 @@ impl Connection {
             if t.from_client {
                 let mut msg_out = Message::new();
                 msg_out.set_test_delay(t);
+                // 发送给视频处理管道
                 self.inner.send(msg_out.into());
             } else {
                 if let Some(tm) = self.last_test_delay {
@@ -1924,6 +1952,7 @@ impl Connection {
                 }
             }
         } else if self.authorized {
+            // 如果不是验证类的消息且当前已经验证
             if self.port_forward_socket.is_some() {
                 return true;
             }
@@ -3142,6 +3171,7 @@ impl Connection {
     }
 
     #[inline]
+    // 调用流的方式发送
     async fn send(&mut self, msg: Message) {
         allow_err!(self.stream.send(&msg).await);
     }

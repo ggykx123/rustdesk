@@ -48,6 +48,7 @@ pub struct RendezvousMediator {
     keep_alive: i32,
 }
 
+// 建立链接服务
 impl RendezvousMediator {
     pub fn restart() {
         SHOULD_EXIT.store(true, Ordering::SeqCst);
@@ -56,6 +57,7 @@ impl RendezvousMediator {
     }
 
     pub async fn start_all() {
+        // 如果设置了仅仅允许链接他人则循环等待
         if config::is_outgoing_only() {
             loop {
                 sleep(1.).await;
@@ -65,6 +67,7 @@ impl RendezvousMediator {
         let mut nat_tested = false;
         check_zombie();
         let server = new_server();
+        // 检查nat类型
         if Config::get_nat_type() == NatType::UNKNOWN_NAT as i32 {
             crate::test_nat_type();
             nat_tested = true;
@@ -73,9 +76,11 @@ impl RendezvousMediator {
             crate::test_rendezvous_server();
         }
         let server_cloned = server.clone();
+        // 直连服务
         tokio::spawn(async move {
             direct_server(server_cloned).await;
         });
+        // 如果不是在Android或iOS平台上，并且安装了服务，则启动LAN监听服务。
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if crate::platform::is_installed() {
             std::thread::spawn(move || {
@@ -83,6 +88,7 @@ impl RendezvousMediator {
             });
         }
         // It is ok to run xdesktop manager when the headless function is not allowed.
+        // 如果是在Linux平台上并且是服务器模式，则启动X桌面管理器。
         #[cfg(target_os = "linux")]
         if crate::is_server() {
             crate::platform::linux_desktop_manager::start_xdesktop();
@@ -386,6 +392,7 @@ impl RendezvousMediator {
         } else {
             false
         };
+        // 
         if (cfg!(debug_assertions) && option_env!("TEST_TCP").is_some())
             || is_http_proxy
             || get_builtin_option(config::keys::OPTION_DISABLE_UDP) == "Y"
@@ -641,6 +648,7 @@ async fn direct_server(server: ServerPtr) {
             OPTION_DIRECT_SERVER,
             &Config::get_option(OPTION_DIRECT_SERVER),
         ) || option2bool("stop-service", &Config::get_option("stop-service"));
+        // 如果开启监听且监听器为空，则初始化监听
         if !disabled && listener.is_none() {
             port = get_direct_port();
             match hbb_common::tcp::listen_any(port as _).await {
@@ -667,21 +675,28 @@ async fn direct_server(server: ServerPtr) {
                 }
             }
         }
+        // 监听并锁定，监听为l
         if let Some(l) = listener.as_mut() {
+            // 如果不运行运行或者端口不一致，则清除监听器并返回
             if disabled || port != get_direct_port() {
                 log::info!("Exit direct access listen");
                 listener = None;
                 continue;
             }
+            // 从l中接受数据里。,超时时间1s
             if let Ok(Ok((stream, addr))) = hbb_common::timeout(1000, l.accept()).await {
+                // 关闭小包合并的功能
+                // set_nodelay方法用于控制TCP流中的Nagle算法。Nagle算法是一个TCP协议中的特性，它的作用是减少网络上的小数据包的数量，以提高网络带宽的利用率。默认情况下，TCP流会启用Nagle算法，这意味着发送方会缓冲小的数据块，直到有足够的数据组成较大的数据包再发送出去。
                 stream.set_nodelay(true).ok();
                 log::info!("direct access from {}", addr);
                 let local_addr = stream
                     .local_addr()
                     .unwrap_or(Config::get_any_listen_addr(true));
                 let server = server.clone();
+                // 建立子线程来新建tcp链接
                 tokio::spawn(async move {
                     allow_err!(
+                        // 新建tcp链接来处理流
                         crate::server::create_tcp_connection(
                             server,
                             hbb_common::Stream::from(stream, local_addr),

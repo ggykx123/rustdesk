@@ -288,6 +288,7 @@ pub async fn start(postfix: &str) -> ResultType<()> {
                                     break;
                                 }
                                 Ok(Some(data)) => {
+                                    // 处理接受到的控制数据，为什么还是没有视频流的消息
                                     handle(data, &mut stream).await;
                                 }
                                 _ => {}
@@ -452,11 +453,14 @@ async fn handle(data: Data, stream: &mut Connection) {
             }
         },
         Data::VideoConnCount(None) => {
+            // 是一个全局的、线程安全的容器，存储已认证的连接。
             let n = crate::server::AUTHED_CONNS
                 .lock()
                 .unwrap()
                 .iter()
+                // 过滤出类似为remote的链接
                 .filter(|x| x.1 == crate::server::AuthConnType::Remote)
+                // 求和计算
                 .count();
             allow_err!(stream.send(&Data::VideoConnCount(Some(n))).await);
         }
