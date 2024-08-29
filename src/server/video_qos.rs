@@ -91,6 +91,7 @@ pub enum RefreshType {
     SetImageQuality,
 }
 
+// 视频QoS相关代码
 impl VideoQoS {
     pub fn spf(&self) -> Duration {
         Duration::from_secs_f32(1. / (self.fps() as f32))

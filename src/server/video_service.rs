@@ -68,7 +68,10 @@ use std::{
 pub const NAME: &'static str = "video";
 pub const OPTION_REFRESH: &'static str = "refresh";
 
+// lazy定义静态变量
 lazy_static::lazy_static! {
+    // 定义一个元祖，第一个值为管道的发送函数, 函数入参 i32, Option<Instant> 表示连接 ID(i32)与接收到视频帧的时间点（可选的 Instant 类型）
+    // 第二个为管道的接受函数，接受函数的入参一样的。但是有了arc共享和TokioMutex线程锁的修饰
     static ref FRAME_FETCHED_NOTIFIER: (UnboundedSender<(i32, Option<Instant>)>, Arc<TokioMutex<UnboundedReceiver<(i32, Option<Instant>)>>>) = {
         let (tx, rx) = unbounded_channel();
         (tx, Arc::new(TokioMutex::new(rx)))
@@ -585,7 +588,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                 if frame.valid() {
                     // 对帧编码
                     let frame = frame.to(encoder.yuvfmt(), &mut yuv, &mut mid_data)?;
-                    // 填充发送消息
+                    // 处理帧并发送
                     let send_conn_ids = handle_one_frame(
                         display_idx,
                         &sp,
@@ -921,6 +924,7 @@ fn check_privacy_mode_changed(
 }
 
 #[inline]
+// 发送数据帧的代码
 fn handle_one_frame(
     display: usize,
     sp: &GenericService,
@@ -940,6 +944,7 @@ fn handle_one_frame(
     })?;
 
     let mut send_conn_ids: HashSet<i32> = Default::default();
+    // 编码视频帧
     match encoder.encode_to_message(frame, ms) {
         Ok(mut vf) => {
             *encode_fail_counter = 0;
@@ -951,6 +956,7 @@ fn handle_one_frame(
                 .unwrap()
                 .as_mut()
                 .map(|r| r.write_message(&msg));
+            // 发送并记录帧id
             send_conn_ids = sp.send_video_frame(msg);
         }
         Err(e) => {
